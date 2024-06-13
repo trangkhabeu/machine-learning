@@ -19,6 +19,8 @@ library(mclust)
 library(ggplot2)
 library(LiblineaR)
 library(readr)
+library(rpart)
+library(rpart.plot)
 
 load("RegularizedLogisticRegression.rda")    # Load saved model
 load("RegularizedLogisticRegression.rda")    # Load saved model
@@ -61,17 +63,6 @@ ui <- fluidPage(
                           )
              ),
              navbarMenu("Model",
-                        tabPanel("Mutiple Linear Regression",
-                                 sidebarLayout(
-                                   sidebarPanel(
-                                     
-                                     selectInput("linrvar", "Select Variable", choices = "", selected = ""),
-                                   ),
-                                   mainPanel(
-                                     div(verbatimTextOutput("linearout"))
-                                   )
-                                 )
-                                 ),
                         
                         tabPanel("Logistic Reg.",
                                  
@@ -95,10 +86,7 @@ ui <- fluidPage(
                         tabPanel("kNN",
                                  sidebarLayout(
                                    sidebarPanel(
-                                     textInput("knntrain", "Select Proportion", value = 0.8, placeholder = "Percentage of rows"),
-                                     radioButtons("knnoption", "Select Option", choices = c("Show Prop.", "Show Train & Test Data", "Show No. of Classes", "Fit", "Accuracy")),
-                                     hr(),
-                                     helpText("First column of data set must be categorical/use '2. kNN_sepsis_numerical' from datasets for testing."),
+                                     
                                      a(href="https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm", "kNN")
                                    ),
                                    mainPanel(
@@ -109,20 +97,30 @@ ui <- fluidPage(
                         tabPanel("Decision Trees",
                                  sidebarLayout(
                                    sidebarPanel(
-                                     selectInput("dtvar", "Select Variable", choices = "", selected = ""),
-                                     selectInput("dtvar2", "Select Variable", choices = "", selected = "", multiple = TRUE),
-                                     textInput("dtprop", "Select Proportion", value = 0.8, placeholder = "Percentage of rows"),
-                                     textInput("dtyname", "Class Variable", value = "num", placeholder = "Class Variable"),
-                                     radioButtons("dtoption", "Select Method", choices = c("No Option", "Table", "Show Prop.", "Train & Test Data", "Fit", "Predicted", "Pred. Accuracy")), 
-                                     radioButtons("dtplot", "Select Plot", choices = c("No Plot", "QPlot", "DTree")),
-                                     hr(),
-                                     helpText("Variable selected must be categorical and numerical. Use '4. DT_breast_cancer.csv' from datasets for testing."),
                                      hr(),
                                      a(href="http://mlwiki.org/index.php/Decision_Tree_Exercises", "Decision Trees")
                                    ),
                                    mainPanel(
-                                     div(verbatimTextOutput("dtoutput")),
                                      div(plotOutput("dtplot"))     
+                                   )
+                                 )
+                        ),
+                        tabPanel("Random Forests", 
+                                 sidebarLayout(
+                                   sidebarPanel(
+                                     selectInput("rfvar", "Select Variable", choices = "", selected = ""),
+                                     
+                                     textInput("rfprop", "Select Proportion", value = 0.8, placeholder = "Percentage of rows"),
+                                     textInput("rfyname", "Class Variable", value = "old", placeholder = "Class Variable"),
+                                     radioButtons("rfoption", "Select Method", choices = c("No Option", "Table", "Show Prop.", "Train & Test Data", "Fit", "Summary", "Predicted", "Pred. Accuracy")),
+                                     hr(),
+                                     helpText("Variable selected must be categorical and numerical. Use '5. RF_abalone_short.csv' from datasets for testing."),
+                                     hr(),
+                                     a(href="https://en.wikipedia.org/wiki/Random_forest", "Random Forest")
+                                   ),
+                                   mainPanel(
+                                     div(verbatimTextOutput("rfoutput"))
+                                     
                                    )
                                  )
                         )
@@ -222,64 +220,7 @@ server <- function(input, output, session) {
     }
   })
   
-  #linear regression
-  observeEvent(input$file1, {
-    updateSelectInput(session, inputId = "linrvar", choices = names(data_input()))
-  })
   
-  linearout <- reactive({
-    df <- data_input()  
-    var <- input$linrvar  
-    train_prop <- as.numeric(input$linrprop)  
-    
-    Train <- createDataPartition(df[, var], p=train_prop, list=FALSE)
-    training <- df[Train, ]
-    testing <- df[-Train, ]
-    
-    train_ratio <- nrow(training) / (nrow(testing) + nrow(training))
-    
-    mod_fit <- lm(as.formula(paste(var, "~ .")), data=training)
-    
-    coefficients <- coef(mod_fit)
-    
-    if (input$linroption == "Show Prop.") {
-      return(train_ratio)
-    } else if (input$linroption == "Fit") {
-      return(mod_fit)
-    } else if (input$linroption == "Coef.") {
-      return(data.frame(coefficients))
-    } else if (input$linroption == "Pred. Accuracy") {
-      pred_out <- predict(mod_fit, newdata=testing)
-      mse <- mean((pred_out - testing[, var])^2) 
-      return(mse)
-    }
-  })
-  output$linear <- renderPlot({
-    df <- data_input()  
-    
-    if (is.null(df) || nrow(df) == 0) {  
-      return(NULL)
-    }
-    
-    if (!input$x_col %in% names(df) || !input$y_col %in% names(df)) {  
-      return(NULL)
-    }
-    
-    x_var <- df[, input$x_col]  
-    y_var <- df[, input$y_col]  
-    
-    if (!is.numeric(y_var)) {  
-      return(NULL)
-    }
-    
-    lm_model <- lm(y_var ~ x_var)  
-    
-    plot(x_var, y_var, xlab = input$xaxisname, ylab = input$yaxisname, main = input$title)
-    abline(lm_model, col = "red") 
-  })
-  
-  
-
   
   # Logistic Regression
   
@@ -320,33 +261,31 @@ server <- function(input, output, session) {
     
     
     
-    predictions<-reactive({
-      
+    
+    predictions <- reactive({
       inFile <- input$file1
       
-      if (is.null(inFile)){
+      if (is.null(inFile)) {
         return(NULL)
-      }else{
+      } else {
         withProgress(message = 'Predictions in progress. Please wait ...', {
-          input_data =  readr::read_csv(input$file1$datapath, col_names = TRUE)
+          input_data <- readr::read_csv(input$file1$datapath, col_names = TRUE)
           
-          colnames(input_data) = c("Test1", "Test2", "Label")
+          colnames(input_data) <- c("Test1", "Test2", "Label")
           
-          input_data$Label = as.factor(input_data$Label )
+          # Đảm bảo Label là factor với levels giống như đã huấn luyện mô hình
+          input_data$Label <- factor(input_data$Label, levels = levels(my_model$Label))
           
-          levels(input_data$Label) <- c("Failed", "Passed")
+          mapped <- feature_mapping(input_data)
+          df_final <- cbind(input_data, mapped)
+          prediction <- predict(my_model, df_final)
           
-          mapped = feature_mapping(input_data)
-          
-          df_final = cbind(input_data, mapped)
-          prediction = predict(my_model, df_final)
-          
-          input_data_with_prediction = cbind(input_data,prediction )
+          input_data_with_prediction <- cbind(input_data, prediction)
           input_data_with_prediction
-          
         })
       }
     })
+    
     
     
     output$sample_prediction_heading = renderUI({  # show only if data has been uploaded
@@ -373,147 +312,144 @@ server <- function(input, output, session) {
         scale_colour_manual(values = cols,labels = c("Failed", "Passed"),name="Test Result")
       
     })
+    
+    
   # KNN
-  
-  knnout <- reactive({
-    
-    df <- data_input()
-    
-    rows <- round(as.numeric(input$knntrain)*dim(df)[1])
-    
-    if(input$knnoption == "Show Prop."){
-      return(rows)  
+    observeEvent(input$file1, {
+      updateSelectInput(session, inputId = "dtvar1", choices = names(data_input()))
+      updateSelectInput(session, inputId = "feature1", choices = names(data_input()))
+      updateSelectInput(session, inputId = "feature2", choices = names(data_input()))
     }
+    )
     
-    lascol <- dim(df)[2]
+    knnout <- reactive({
+      df <- clean_data()
+      
+      # Chia dữ liệu thành tập huấn luyện và kiểm tra
+      set.seed(123)
+      size <- floor(0.8 *  nrow(df))
+      train_ind <- sample(seq_len(nrow(df)), size = size)
+      train_labels <- df[train_ind, input$dtvar1]
+      data_train <- df[train_ind, c(input$feature1, input$feature2 )]
+      data_test <- df[-train_ind, c(input$feature1, input$feature2 )]
+      data_test_labels <- df[-train_ind, input$dtvar1]
+      
+      # Fit KNN Model
+      predictions <- knn(train = data_train,
+                         test = data_test,
+                         cl = train_labels,
+                         k = 11)
+      
+      # Prepare data for plotting predictions
+      plot_predictions <- data.frame(
+        data_test,
+        predicted = predictions
+      )
+      
+      colnames(plot_predictions) <- c(input$feature1, input$feature2, "predicted")
+      
+      # Visualize the KNN algorithm results.
+      p1 <- ggplot(plot_predictions, aes_string(x = input$feature1, y = input$feature2, color = "predicted", fill = "predicted")) + 
+        geom_point(size = 5) + 
+        geom_text(aes_string(label = data_test_labels), hjust = 1, vjust = 2) +
+        ggtitle("Predicted relationship between Feature 1 and Feature 2") +
+        theme(plot.title = element_text(hjust = 0.5)) +
+        theme(legend.position = "none")
+      
+      # Sắp xếp các đồ thị cạnh nhau
+      p1
+    })
     
-    train_data <- df[1:rows, 2:lascol]
-    test_data <- df[-(1:rows), 2:lascol]
-    
-    if(input$knnoption == "Show Train & Test Data"){
-      return(list(head(train_data), head(test_data)))
-    }
-    
-    train_labels <- df[1:rows, 1]
-    test_labels <- df[-(1:rows), 1]
-    
-    k_ = round(sqrt(dim(df)[1]))
-    
-    if(input$knnoption == "Show No. of Classes"){
-      return(k_)
-    }
-    
-    fit <- knn(train = train_data, test = test_data, cl = train_labels, k = k_)
-    
-    if(input$knnoption == "Fit"){
-      return(data.frame(fit))
-    }
-    
-    out <- CrossTable(x = test_labels, y = fit, prop.chisq = FALSE)
-    
-    if(input$knnoption == "Accuracy"){
-      return(out)
-    }
-    
-  })
-  
-  output$knnoutput <- renderPrint({
-    if(input$knnoption == "Show Prop."){
+    output$knnoutput <- renderPlot({
       knnout()
-    } else if(input$knnoption == "Show Train & Test Data"){
-      knnout()
-    } else if(input$knnoption == "Show No. of Classes"){
-      knnout()
-    } else if(input$knnoption == "Fit"){
-      knnout()
-    } else if(input$knnoption == "Accuracy"){
-      knnout()
-    }
-    
-  })
+    })
   
   # DECISION TREE
   
-  observeEvent(input$file1, {
-    updateSelectInput(session, inputId = "dtvar", choices = names(data_input()))
-    updateSelectInput(session, inputId = "dtvar2", choices = names(data_input()))
-  }
-  )
   
-  dtout <- reactive({
+  gender_tree <- reactive({
+    req(input$file1)  # Đảm bảo rằng đã có file được tải lên
+    data <- data_input()
     
-    df <- data_input()
-    tab = table(df[, input$dtvar])
-    
-    if (input$dtoption == "Table"){
-      return(tab)
-    }
-    
-    index = createDataPartition(y=df[, input$dtvar], p=0.7, list=FALSE)
-    
-    train.set = df[index,]
-    test.set = df[-index,]
-    
-    if (input$dtoption == "Train & Test Data"){
-      return(list(head(train.set), head(test.set)))
-    }
-    
-    if (input$dtoption == "Show Prop."){
-      return(dim(train.set))
-    }
-    
-    var <- input$dtvar
-    
-    brest.tree = train(as.formula(paste(var, "~", ".")),
-                       data=train.set,
-                       method="rpart",
-                       trControl = trainControl(method = "cv"))
-    
-    if (input$dtplot == "QPlot"){
-      
-      plot(brest.tree$finalModel, uniform=TRUE, main="Classification Tree"); text(brest.tree$finalModel, use.n.=TRUE, all=TRUE, cex=.8)
-    }
-    
-    
-    if (input$dtoption == "Fit"){
-      return(brest.tree)
-    }
-    
-    
-    if (input$dtplot == "DTree"){
-      fancyRpartPlot(brest.tree$finalModel)
-    }
-    
-    pred <- predict(brest.tree, test.set)
-    out <- confusionMatrix(pred, test.set[, "Class_num"])
-    
-    if (input$dtoption == "Predicted"){
-      return(data.frame(pred))
-    }
-    
-    if (input$dtoption == "Pred. Accuracy"){
-      return(out)
-    }
-    
-  })
-  
-  output$dtoutput <- renderPrint({
-    dtout()
+    # Sử dụng tất cả các biến trong file để tạo cây quyết định
+    formula <- as.formula(paste(names(data)[ncol(data)], "~ ."))  # Chọn biến cuối cùng làm biến mục tiêu
+    rpart(formula, data = data)
   })
   
   output$dtplot <- renderPlot({
-    if (input$dtplot == "QPlot"){
-      dtout()
-    } else if (input$dtplot == "DTree"){
-      dtout()
-    } else if (input$dtoption == "Pred. Accuracy"){
-      dtout()
-    } else if (input$dtoption == "Predicted"){
-      dtout()
+    req(input$file1)  # Đảm bảo rằng đã có file được tải lên
+    
+    # Vẽ đồ thị cây quyết định
+    rpart.plot(gender_tree(), type = 3, extra = 101)
+  })
+  
+  # RANDOM FOREST
+  
+  observeEvent(input$file1, {
+    updateSelectInput(session, inputId = "rfvar", choices = names(data_input()))
+  }
+  )
+  
+  rfout <- reactive({
+    df <- data_input()
+    
+    if (input$rfoption == "Table"){
+      return(table(df[, input$rfvar]))
     }
-  })  
+    
+    # train_index <- sample(1:nrow(df), as.numeric(input$rfprop) * nrow(df))
+    
+    prop <- as.numeric(input$rfprop)
+    
+    train_set <- df[1:(nrow(df)*prop),]
+    test_set <- df[-(1:(nrow(df)*prop)),]
+    
+    
+    if (input$rfoption == "Show Prop."){
+      return(dim(train_set)[1]/dim(df)[1])
+    }
+    
+    
+    if (input$rfoption == "Train & Test Data"){
+      return(list(head(train_set), head(test_set), dim(train_set), dim(test_set)))
+    }
+    
+    var <- input$rfvar
+    
+    rf_fit <- randomForest::randomForest(as.formula(paste(var, "~", ".")), data = train_set, importance = TRUE, proximity = TRUE)
+    
+    if (input$rfoption == "Fit"){
+      return(rf_fit)
+    }
+    
+    if (input$rfoption == "Summary"){
+      return(summary(rf_fit))
+    }
+    
+    rf_pred <- predict(rf_fit, test_set)
+    
+    out <- confusionMatrix(round(rf_pred), as.numeric(test_set[, input$rfvar]))
+    
+    if (input$rfoption == "Predicted"){
+      return(data.frame(rf_pred))
+    }
+    
+    if (input$rfoption == "Pred. Accuracy"){
+      return(out)
+    }
+    
+    # return(out)
+  })
+  
+  output$rfoutput <- renderPrint({
+    rfout()
+  })
   
 }
+
+
+  
+
 
 # Run the application 
 shinyApp(ui = ui, server = server)
