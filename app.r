@@ -88,13 +88,18 @@ ui <- fluidPage(
                         tabPanel("kNN",
                                  sidebarLayout(
                                    sidebarPanel(
-                                     selectInput("dtvar1", "Select Variable", choices = "", selected = ""),
-                                     selectInput("feature1", "Select Variable", choices = "", selected = ""),
-                                     selectInput("feature2", "Select Variable", choices = "", selected = ""),
+                                     selectInput("knn_x_vars", "Select Independent Variables", choices = "", selected = "", multiple = TRUE),
+                                     selectInput("knn_y_var", "Select Dependent Variable", choices = "", selected = ""),
+                                     textInput("knn_prop", "Select Proportion", value = 0.8, placeholder = "Percentage of rows"),
+                                     actionButton("btn_knn_predict", "Predict"),
+                                     hr(),
+                                     helpText("Variable selected must be categorical and numerical. Use '5. RF_abalone_short.csv' from datasets for testing."),
+                                     hr(),
                                      a(href="https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm", "kNN")
                                    ),
                                    mainPanel(
-                                     div(plotOutput("knnoutput"))
+                                     textOutput("knn_prediction_result"),
+                                     plotOutput("knn_plot")
                                    )
                                  )
                         ),
@@ -313,59 +318,56 @@ server <- function(input, output, session) {
     })
     
     
-  # KNN
+    # KNN
     observeEvent(input$file1, {
-      updateSelectInput(session, inputId = "dtvar1", choices = names(data_input()))
-      updateSelectInput(session, inputId = "feature1", choices = names(data_input()))
-      updateSelectInput(session, inputId = "feature2", choices = names(data_input()))
-    }
-    )
-    
-    knnout <- reactive({
-      req(input$dtvar1, input$feature1, input$feature2)
-      df <- data_input()
-      
-      df[[input$dtvar1]] <- as.factor(df[[input$dtvar1]])
-      
-      # Kiểm tra và loại bỏ các hàng có giá trị NA
-      df <- na.omit(df)
-      
-      # Chia dữ liệu thành tập huấn luyện và kiểm tra
-      set.seed(123)
-      size <- floor(0.8 * nrow(df))
-      train_ind <- sample(seq_len(nrow(df)), size = size)
-      train_labels <- df[train_ind, input$dtvar1]
-      data_train <- df[train_ind, c(input$feature1, input$feature2)]
-      data_test <- df[-train_ind, c(input$feature1, input$feature2)]
-      data_test_labels <- df[-train_ind, input$dtvar1]
-      
-      # Fit KNN Model
-      predictions <- knn(train = data_train,
-                         test = data_test,
-                         cl = train_labels,
-                         k = 11)
-      
-      # Prepare data for plotting predictions
-      plot_predictions <- data.frame(
-        data_test,
-        predicted = predictions
-      )
-      
-      colnames(plot_predictions) <- c(input$feature1, input$feature2, "predicted")
-      
-      # Visualize the KNN algorithm results
-      p1 <- ggplot(plot_predictions, aes_string(x = input$feature1, y = input$feature2, color = "predicted", fill = "predicted")) + 
-        geom_point(size = 5) + 
-        geom_text(aes_string(label = data_test_labels), hjust = 1, vjust = 2) +
-        ggtitle("Predicted relationship between Feature 1 and Feature 2") +
-        theme(plot.title = element_text(hjust = 0.5)) +
-        theme(legend.position = "none")
-      
-      p1
+      updateSelectInput(session, inputId = "knn_x_vars", choices = names(data_input()))
+      updateSelectInput(session, inputId = "knn_y_var", choices = names(data_input()))
     })
     
-    output$knnplot <- renderPlot({
-      knnout()
+    observeEvent(input$btn_knn_predict, {
+      req(input$knn_x_vars, input$knn_y_var, input$knn_prop)
+      
+      df <- clean_data()
+      
+      x_cols <- input$knn_x_vars
+      y_col <- input$knn_y_var
+      
+      X <- df[, x_cols, drop = FALSE]
+      y <- df[, y_col]
+      
+      prop <- as.numeric(input$knn_prop)
+      
+      # Chia dữ liệu thành tập huấn luyện và tập kiểm tra
+      set.seed(42)
+      train_index <- sample(1:nrow(df), size = prop * nrow(df))
+      
+      X_train <- X[train_index, ]
+      X_test <- X[-train_index, ]
+      y_train <- y[train_index]
+      y_test <- y[-train_index]
+      
+      # Kiểm tra kích thước của dữ liệu
+      print(paste("Training data size:", nrow(X_train)))
+      print(paste("Testing data size:", nrow(X_test)))
+      
+      # Huấn luyện mô hình KNN
+      knn_model <- knn(train = X_train, test = X_test, cl = y_train, k = 11)
+      
+      # Đánh giá độ chính xác của mô hình
+      accuracy <- mean(knn_model == y_test)
+      
+      # Hiển thị độ chính xác
+      output$knn_prediction_result <- renderText({
+        paste("Accuracy: ", round(accuracy * 100, 2), "%")
+      })
+      
+      # Hiển thị biểu đồ dự đoán
+      output$knn_plot <- renderPlot({
+        plot_data <- data.frame(X_test, Predicted = knn_model)
+        ggplot(plot_data, aes_string(x = names(X_test)[1], y = names(X_test)[2], color = "Predicted")) +
+          geom_point() +
+          labs(title = "KNN Predictions")
+      })
     })
   
   # DECISION TREE
