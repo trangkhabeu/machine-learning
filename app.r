@@ -21,6 +21,8 @@ library(LiblineaR)
 library(readr)
 library(rpart)
 library(rpart.plot)
+library(randomForest)
+library(dplyr)
 
 load("RegularizedLogisticRegression.rda")    # Load saved model
 load("RegularizedLogisticRegression.rda")    # Load saved model
@@ -86,11 +88,13 @@ ui <- fluidPage(
                         tabPanel("kNN",
                                  sidebarLayout(
                                    sidebarPanel(
-                                     
+                                     selectInput("dtvar1", "Select Variable", choices = "", selected = ""),
+                                     selectInput("feature1", "Select Variable", choices = "", selected = ""),
+                                     selectInput("feature2", "Select Variable", choices = "", selected = ""),
                                      a(href="https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm", "kNN")
                                    ),
                                    mainPanel(
-                                     div(verbatimTextOutput("knnoutput"))
+                                     div(plotOutput("knnoutput"))
                                    )
                                  )
                         ),
@@ -110,16 +114,11 @@ ui <- fluidPage(
                                    sidebarPanel(
                                      selectInput("rfvar", "Select Variable", choices = "", selected = ""),
                                      
-                                     textInput("rfprop", "Select Proportion", value = 0.8, placeholder = "Percentage of rows"),
-                                     textInput("rfyname", "Class Variable", value = "old", placeholder = "Class Variable"),
-                                     radioButtons("rfoption", "Select Method", choices = c("No Option", "Table", "Show Prop.", "Train & Test Data", "Fit", "Summary", "Predicted", "Pred. Accuracy")),
-                                     hr(),
-                                     helpText("Variable selected must be categorical and numerical. Use '5. RF_abalone_short.csv' from datasets for testing."),
                                      hr(),
                                      a(href="https://en.wikipedia.org/wiki/Random_forest", "Random Forest")
                                    ),
                                    mainPanel(
-                                     div(verbatimTextOutput("rfoutput"))
+                                     div(plotOutput("rfoutput"))
                                      
                                    )
                                  )
@@ -323,15 +322,21 @@ server <- function(input, output, session) {
     )
     
     knnout <- reactive({
-      df <- clean_data()
+      req(input$dtvar1, input$feature1, input$feature2)
+      df <- data_input()
+      
+      df[[input$dtvar1]] <- as.factor(df[[input$dtvar1]])
+      
+      # Kiểm tra và loại bỏ các hàng có giá trị NA
+      df <- na.omit(df)
       
       # Chia dữ liệu thành tập huấn luyện và kiểm tra
       set.seed(123)
-      size <- floor(0.8 *  nrow(df))
+      size <- floor(0.8 * nrow(df))
       train_ind <- sample(seq_len(nrow(df)), size = size)
       train_labels <- df[train_ind, input$dtvar1]
-      data_train <- df[train_ind, c(input$feature1, input$feature2 )]
-      data_test <- df[-train_ind, c(input$feature1, input$feature2 )]
+      data_train <- df[train_ind, c(input$feature1, input$feature2)]
+      data_test <- df[-train_ind, c(input$feature1, input$feature2)]
       data_test_labels <- df[-train_ind, input$dtvar1]
       
       # Fit KNN Model
@@ -348,7 +353,7 @@ server <- function(input, output, session) {
       
       colnames(plot_predictions) <- c(input$feature1, input$feature2, "predicted")
       
-      # Visualize the KNN algorithm results.
+      # Visualize the KNN algorithm results
       p1 <- ggplot(plot_predictions, aes_string(x = input$feature1, y = input$feature2, color = "predicted", fill = "predicted")) + 
         geom_point(size = 5) + 
         geom_text(aes_string(label = data_test_labels), hjust = 1, vjust = 2) +
@@ -356,11 +361,10 @@ server <- function(input, output, session) {
         theme(plot.title = element_text(hjust = 0.5)) +
         theme(legend.position = "none")
       
-      # Sắp xếp các đồ thị cạnh nhau
       p1
     })
     
-    output$knnoutput <- renderPlot({
+    output$knnplot <- renderPlot({
       knnout()
     })
   
@@ -391,58 +395,39 @@ server <- function(input, output, session) {
   )
   
   rfout <- reactive({
+    req(input$rfvar)
     df <- data_input()
     
-    if (input$rfoption == "Table"){
-      return(table(df[, input$rfvar]))
+    df[[input$rfvar]] <- as.factor(df[[input$rfvar]])
+    
+    # Kiểm tra và loại bỏ các lớp rỗng
+    df <- df[df[[input$rfvar]] != "",]
+    
+    set.seed(123)  # Để kết quả có thể tái lập lại
+    
+    # Ensure data_set_size is calculated correctly
+    data_set_size <- floor(0.7 * nrow(df))
+    index <- sample(seq_len(nrow(df)), size = data_set_size)
+    training <- df[index,]
+    testing <- df[-index,]
+    
+    training <- droplevels(training)
+    
+    # Đảm bảo không có lớp rỗng trong tập huấn luyện
+    if(any(table(training[[input$rfvar]]) == 0)) {
+      stop("Tập huấn luyện có lớp rỗng. Vui lòng chọn biến khác hoặc làm sạch dữ liệu.")
     }
     
-    # train_index <- sample(1:nrow(df), as.numeric(input$rfprop) * nrow(df))
-    
-    prop <- as.numeric(input$rfprop)
-    
-    train_set <- df[1:(nrow(df)*prop),]
-    test_set <- df[-(1:(nrow(df)*prop)),]
-    
-    
-    if (input$rfoption == "Show Prop."){
-      return(dim(train_set)[1]/dim(df)[1])
-    }
-    
-    
-    if (input$rfoption == "Train & Test Data"){
-      return(list(head(train_set), head(test_set), dim(train_set), dim(test_set)))
-    }
-    
-    var <- input$rfvar
-    
-    rf_fit <- randomForest::randomForest(as.formula(paste(var, "~", ".")), data = train_set, importance = TRUE, proximity = TRUE)
-    
-    if (input$rfoption == "Fit"){
-      return(rf_fit)
-    }
-    
-    if (input$rfoption == "Summary"){
-      return(summary(rf_fit))
-    }
-    
-    rf_pred <- predict(rf_fit, test_set)
-    
-    out <- confusionMatrix(round(rf_pred), as.numeric(test_set[, input$rfvar]))
-    
-    if (input$rfoption == "Predicted"){
-      return(data.frame(rf_pred))
-    }
-    
-    if (input$rfoption == "Pred. Accuracy"){
-      return(out)
-    }
-    
-    # return(out)
+    rf <- randomForest(as.formula(paste(input$rfvar, "~ .")),
+                       data = training,
+                       mtry = 4,
+                       ntree = 200,
+                       importance = TRUE)
+    rf
   })
   
-  output$rfoutput <- renderPrint({
-    rfout()
+  output$rfoutput <- renderPlot({
+    plot(rfout())
   })
   
 }
